@@ -1,0 +1,5 @@
+# For make_dataset.py and train.py
+torch
+torchvision
+pillow
+numpy

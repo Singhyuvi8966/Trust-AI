@@ -1,0 +1,8 @@
+# OPTIONAL: real face analysis (embeddings, landmarks, age estimation, liveness).
+# Needs Python 3.10 - 3.12 (TensorFlow does not support newer versions yet).
+# Without this file installed, the backend still runs in MOCK mode.
+-r requirements.txt
+deepface>=0.0.93
+tf-keras
+opencv-python
+numpy

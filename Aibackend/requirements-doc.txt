@@ -1,0 +1,6 @@
+# OPTIONAL: lets the backend run the trained document tamper model (models/document_tamper.pt).
+# Works on Python 3.13 too. Without it (or without the .pt file) the document check stays in MOCK mode.
+-r requirements.txt
+torch
+torchvision
+pillow

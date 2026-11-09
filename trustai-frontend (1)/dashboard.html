@@ -1,0 +1,334 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Dashboard - TrustAI</title>
+<script>try{document.documentElement.setAttribute("data-theme",localStorage.getItem("theme")||"light")}catch(e){}</script>
+<link rel="stylesheet" href="theme.css">
+</head>
+<body class="app">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="main">
+    <header class="page-head">
+      <h1>Dashboard</h1>
+      <p>An overview of recent verifications.</p>
+    </header>
+    <div class="content">
+      <div class="stats">
+        <div class="stat"><span class="sico" id="ico-total"></span><div><span>Total checks</span><b id="stat-total">–</b></div></div>
+        <div class="stat ok"><span class="sico" id="ico-ok"></span><div><span>Verified</span><b id="stat-passed">–</b></div></div>
+        <div class="stat bad"><span class="sico" id="ico-bad"></span><div><span>Flagged</span><b id="stat-failed">–</b></div></div>
+        <div class="stat gold"><span class="sico" id="ico-rate"></span><div><span>Pass rate</span><b id="stat-rate">–</b></div></div>
+      </div>
+
+      <div class="insights">
+        <section class="panel">
+          <h2>Outcomes</h2>
+          <div class="donut-wrap" id="donut"></div>
+        </section>
+        <section class="panel">
+          <h2>Face match on recent checks</h2>
+          <p class="muted" style="font-size:.88rem">Oldest on the left. Green passed, red was flagged.</p>
+          <div id="bars"></div>
+        </section>
+      </div>
+
+      <section class="panel trend">
+        <div class="trend-head">
+          <div>
+            <h2>Checks per day</h2>
+            <p class="muted" style="font-size:.88rem" id="trend-sub">Last 14 days</p>
+          </div>
+          <div class="leg">
+            <span><i style="background:var(--accent-ink)"></i>All checks</span>
+            <span><i style="background:var(--ok)"></i>Verified</span>
+          </div>
+        </div>
+        <div id="trend"></div>
+      </section>
+
+      <section class="table-panel">
+        <div class="table-head">
+          <h2>Verifications</h2>
+          <span class="muted" style="font-size:.85rem" id="updated"></span>
+        </div>
+        <div class="toolbar">
+          <div class="chips" role="radiogroup" aria-label="Filter by result">
+            <label><input type="radio" name="flt" value="all" checked><span>All</span></label>
+            <label><input type="radio" name="flt" value="pass"><span>Verified</span></label>
+            <label><input type="radio" name="flt" value="fail"><span>Flagged</span></label>
+          </div>
+          <label class="search" id="search-box"><span id="search-ico" aria-hidden="true"></span>
+            <input id="search" type="search" placeholder="Search operator, reason or field" aria-label="Search verifications"></label>
+          <span class="spacer"></span>
+          <button class="btn btn-ghost" id="export-btn" type="button"></button>
+          <button class="btn btn-ghost" id="refresh-btn" type="button">Refresh</button>
+        </div>
+        <p class="alert" id="error-box" role="alert" hidden style="margin:16px 24px"></p>
+        <div class="meta-line"><span id="count-line"></span><span>Click a row for details</span></div>
+        <div class="table-scroll">
+          <table class="data">
+            <thead>
+              <tr><th>Time</th><th>Operator</th><th>Status</th><th>Match score</th><th>Flagged field</th><th>Reason</th></tr>
+            </thead>
+            <tbody id="history-body">
+              <tr><td class="empty" colspan="6">Loading…</td></tr>
+            </tbody>
+          </table>
+        </div>
+      </section>
+    </div>
+  </main>
+
+  <div class="drawer-overlay" id="overlay"></div>
+  <aside class="drawer" id="drawer" role="dialog" aria-modal="true" aria-labelledby="dr-title"></aside>
+
+<script src="common.js"></script>
+<script>
+(function () {
+  const T = window.TrustAI;
+  const esc = T.esc;
+  const $ = (id) => document.getElementById(id);
+  T.requireAuth();
+  T.renderSidebar("dashboard");
+
+  $("ico-total").innerHTML = T.ICONS.scan;
+  $("ico-ok").innerHTML = T.ICONS.ok;
+  $("ico-bad").innerHTML = T.ICONS.alert;
+  $("ico-rate").innerHTML = T.ICONS.chart;
+  $("search-ico").innerHTML = T.ICONS.search;
+  $("export-btn").innerHTML = T.ICONS.download + " Export CSV";
+
+  let all = [];        // every record the server returned (newest first)
+  let shown = [];      // records matching the current filter + search
+  let filter = "all";
+  let query = "";
+  let lastFocus = null;
+
+  /* ---------- charts ---------- */
+  function renderDonut(passed, failed) {
+    const total = passed + failed;
+    const r = 52, c = 2 * Math.PI * r;
+    const pct = total ? passed / total : 0;
+    const len = c * pct;
+    $("donut").innerHTML = `
+      <svg class="donut" viewBox="0 0 140 140" role="img" aria-label="${total ? Math.round(pct * 100) + "% verified" : "No data yet"}">
+        <circle class="trk ${total ? "" : "empty"}" cx="70" cy="70" r="${r}"/>
+        ${total ? `<circle class="arc" cx="70" cy="70" r="${r}" stroke-dasharray="${len.toFixed(1)} ${(c - len).toFixed(1)}" transform="rotate(-90 70 70)"/>` : ""}
+        <text x="70" y="75" text-anchor="middle" class="n">${total ? Math.round(pct * 100) + "%" : "–"}</text>
+        <text x="70" y="94" text-anchor="middle" class="s">verified</text>
+      </svg>
+      <div class="legend">
+        <span><i class="ok"></i>Verified: <b>${passed}</b></span>
+        <span><i class="bad"></i>Flagged: <b>${failed}</b></span>
+      </div>`;
+  }
+
+  function renderBars() {
+    const el = $("bars");
+    const recent = all.slice(0, 25);
+    if (!recent.length) { el.innerHTML = '<div class="bars-empty">No checks yet.</div>'; return; }
+    el.innerHTML = `<div class="bars">
+      <div class="markline" style="bottom:75%"><span>pass mark 75%</span></div>
+      ${recent.slice().reverse().map((r) => {
+        const s = r.biometric_check && typeof r.biometric_check.match_score === "number" ? r.biometric_check.match_score : 0;
+        const tip = new Date(r.timestamp).toLocaleString() + ": " + Math.round(s * 100) + "%";
+        return `<div class="bar ${r.status === "pass" ? "ok" : "bad"}" style="height:${Math.max(3, s * 100)}%" title="${esc(tip)}"></div>`;
+      }).join("")}
+    </div>`;
+  }
+
+  function renderTrend() {
+    const DAYS = 14;
+    const today = new Date(); today.setHours(0, 0, 0, 0);
+    const days = [];
+    for (let i = DAYS - 1; i >= 0; i--) {
+      const d = new Date(today); d.setDate(today.getDate() - i);
+      days.push({ d, total: 0, passed: 0 });
+    }
+    const index = new Map(days.map((x, i) => [x.d.getTime(), i]));
+    all.forEach((r) => {
+      const t = new Date(r.timestamp); t.setHours(0, 0, 0, 0);
+      const i = index.get(t.getTime());
+      if (i !== undefined) { days[i].total++; if (r.status === "pass") days[i].passed++; }
+    });
+    const sum = days.reduce((a, x) => a + x.total, 0);
+    $("trend-sub").textContent = sum ? `${sum} check${sum === 1 ? "" : "s"} in the last 14 days` : "Last 14 days";
+    if (!sum) { $("trend").innerHTML = '<div class="bars-empty">No checks in the last 14 days.</div>'; return; }
+
+    const max = Math.max(1, ...days.map((x) => x.total));
+    const W = 640, H = 200, L = 34, R = 14, Tp = 14, B = 28;
+    const x = (i) => L + i * (W - L - R) / (DAYS - 1);
+    const y = (v) => Tp + (H - Tp - B) * (1 - v / max);
+    const pts = (k) => days.map((d, i) => `${x(i).toFixed(1)},${y(d[k]).toFixed(1)}`).join(" ");
+    const area = `${x(0).toFixed(1)},${y(0).toFixed(1)} ${pts("total")} ${x(DAYS - 1).toFixed(1)},${y(0).toFixed(1)}`;
+    const ticks = max <= 4 ? Array.from({ length: max + 1 }, (_, i) => i) : [0, Math.round(max / 2), max];
+    const fmt = (d) => d.toLocaleDateString(undefined, { day: "numeric", month: "short" });
+
+    $("trend").innerHTML = `
+      <svg viewBox="0 0 ${W} ${H}" role="img" aria-label="Checks per day for the last 14 days">
+        ${ticks.map((v) => `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v).toFixed(1)}" y2="${y(v).toFixed(1)}"/>
+          <text class="lbl" x="${L - 8}" y="${(y(v) + 4).toFixed(1)}" text-anchor="end">${v}</text>`).join("")}
+        <polygon class="area" points="${area}"/>
+        <polyline class="l-total" points="${pts("total")}"/>
+        <polyline class="l-pass" points="${pts("passed")}"/>
+        ${days.map((d, i) => `<circle class="p-total" cx="${x(i).toFixed(1)}" cy="${y(d.total).toFixed(1)}" r="3.5"><title>${esc(fmt(d.d))}: ${d.total} checks, ${d.passed} verified</title></circle>`).join("")}
+        ${[0, 6, 13].map((i) => `<text class="lbl" x="${x(i).toFixed(1)}" y="${H - 8}" text-anchor="${i === 0 ? "start" : i === 13 ? "end" : "middle"}">${esc(fmt(days[i].d))}</text>`).join("")}
+      </svg>`;
+  }
+
+  /* ---------- table ---------- */
+  function matches(r) {
+    if (filter === "pass" && r.status !== "pass") return false;
+    if (filter === "fail" && r.status !== "fail") return false;
+    if (!query) return true;
+    const hay = [r.performed_by, r.overall_reason, r.document_check && r.document_check.flagged_field,
+      r.id_image_filename, r.selfie_image_filename, r.status === "pass" ? "verified" : "flagged"]
+      .join(" ").toLowerCase();
+    return hay.includes(query);
+  }
+
+  function renderTable() {
+    shown = all.filter(matches);
+    const rows = shown.slice(0, 100);
+    $("count-line").textContent = all.length
+      ? `Showing ${rows.length} of ${shown.length}${shown.length !== all.length ? " matching" : ""} records`
+      : "";
+    if (!rows.length) {
+      $("history-body").innerHTML = `<tr><td class="empty" colspan="6">${all.length
+        ? "No records match your filter."
+        : "No verifications yet. Run one and it will show up here."}</td></tr>`;
+      return;
+    }
+    $("history-body").innerHTML = rows.map((r, i) => {
+      const pass = r.status === "pass";
+      const score = r.biometric_check && typeof r.biometric_check.match_score === "number"
+        ? Math.round(r.biometric_check.match_score * 100) + "%" : "–";
+      const field = (r.document_check && r.document_check.flagged_field) || "–";
+      const op = r.performed_by;
+      return `<tr tabindex="0" data-i="${i}">
+        <td style="white-space:nowrap" class="muted">${esc(new Date(r.timestamp).toLocaleString())}</td>
+        <td>${op ? `<span class="who"><span class="mini">${esc(op.slice(0, 2).toUpperCase())}</span>${esc(op)}</span>` : "–"}</td>
+        <td><span class="badge ${pass ? "ok" : "bad"}">${pass ? "Verified" : "Flagged"}</span></td>
+        <td><b>${score}</b></td>
+        <td>${esc(field)}</td>
+        <td class="reason">${esc(r.overall_reason)}</td>
+      </tr>`;
+    }).join("");
+  }
+
+  $("history-body").addEventListener("click", (e) => {
+    const tr = e.target.closest("tr[data-i]");
+    if (tr) openDrawer(shown[Number(tr.dataset.i)]);
+  });
+  $("history-body").addEventListener("keydown", (e) => {
+    if (e.key !== "Enter" && e.key !== " ") return;
+    const tr = e.target.closest("tr[data-i]");
+    if (tr) { e.preventDefault(); openDrawer(shown[Number(tr.dataset.i)]); }
+  });
+
+  document.querySelectorAll('input[name="flt"]').forEach((r) =>
+    r.addEventListener("change", () => { filter = r.value; renderTable(); }));
+  $("search").addEventListener("input", (e) => { query = e.target.value.trim().toLowerCase(); renderTable(); });
+
+  /* ---------- detail drawer ---------- */
+  function openDrawer(r) {
+    if (!r) return;
+    const pass = r.status === "pass";
+    const b = r.biometric_check || {};
+    const rows = T.describe(r);
+    lastFocus = document.activeElement;
+    $("drawer").innerHTML = `
+      <div class="drawer-head">
+        <div>
+          <h2 id="dr-title">${esc(new Date(r.timestamp).toLocaleString())}</h2>
+          <p>Run by ${esc(r.performed_by || "someone not logged in")}</p>
+        </div>
+        <button class="icon-btn" id="dr-close" type="button" aria-label="Close details">${T.ICONS.close}</button>
+      </div>
+      <div class="verdict ${pass ? "ok" : "bad"}">
+        <span class="stamp-sm">${pass ? "VERIFIED" : "FLAGGED"}</span>
+        <div><h2>${pass ? "Identity verified" : "Flagged for review"}</h2><p>${esc(r.overall_reason)}</p></div>
+      </div>
+      <dl class="details">
+        ${rows.map(([k, v, cls]) => `<div><dt>${esc(k)}</dt><dd class="${cls}">${esc(v)}</dd></div>`).join("")}
+      </dl>
+      ${b.analysis_mode === "mock" ? `<p class="note" style="margin-top:16px">This record came from demo mode, so the values are simulated.</p>` : ""}
+      <p class="ref">ID file: ${esc(r.id_image_filename || "–")}<br>Selfie file: ${esc(r.selfie_image_filename || "–")}<br>Reference: ${esc(r.id)}</p>
+      <div class="result-actions"><button class="btn btn-ghost" id="dr-print" type="button">${T.ICONS.printer} Print report</button></div>`;
+    $("dr-close").addEventListener("click", closeDrawer);
+    $("dr-print").addEventListener("click", () => T.printReport(r));
+    $("overlay").classList.add("open");
+    $("drawer").classList.add("open");
+    $("dr-close").focus();
+  }
+  function closeDrawer() {
+    $("overlay").classList.remove("open");
+    $("drawer").classList.remove("open");
+    if (lastFocus && lastFocus.focus) lastFocus.focus();
+  }
+  $("overlay").addEventListener("click", closeDrawer);
+  document.addEventListener("keydown", (e) => { if (e.key === "Escape") closeDrawer(); });
+
+  /* ---------- CSV export ---------- */
+  function csvCell(v) {
+    let s = String(v === null || v === undefined ? "" : v);
+    if (/^[=+\-@\t\r]/.test(s)) s = "'" + s;     // stop spreadsheet formula injection
+    return '"' + s.replace(/"/g, '""') + '"';
+  }
+  function exportCsv() {
+    if (!shown.length) return T.toast("There is nothing to export.", "bad");
+    const head = ["Time", "Operator", "Status", "Match score %", "Pass mark %", "Document tampered", "Flagged field",
+      "Liveness passed", "ID file", "Selfie file", "Reason", "Reference"];
+    const lines = shown.map((r) => {
+      const b = r.biometric_check || {}, d = r.document_check || {};
+      return [
+        new Date(r.timestamp).toLocaleString(), r.performed_by || "", r.status === "pass" ? "Verified" : "Flagged",
+        typeof b.match_score === "number" ? Math.round(b.match_score * 100) : "",
+        typeof b.threshold_used === "number" ? Math.round(b.threshold_used * 100) : "",
+        d.tampered ? "Yes" : "No", d.flagged_field || "", b.liveness_passed ? "Yes" : "No",
+        r.id_image_filename || "", r.selfie_image_filename || "", r.overall_reason || "", r.id || "",
+      ].map(csvCell).join(",");
+    });
+    const blob = new Blob(["\ufeff" + [head.map(csvCell).join(","), ...lines].join("\r\n")], { type: "text/csv;charset=utf-8" });
+    const a = document.createElement("a");
+    a.href = URL.createObjectURL(blob);
+    a.download = `trustai-verifications-${new Date().toISOString().slice(0, 10)}.csv`;
+    document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+    T.toast(`Exported ${shown.length} record${shown.length === 1 ? "" : "s"}.`, "ok");
+  }
+  $("export-btn").addEventListener("click", exportCsv);
+
+  /* ---------- loading ---------- */
+  async function loadAll(silent) {
+    $("error-box").hidden = true;
+    try {
+      const [stats, hist] = await Promise.all([T.api("/stats"), T.api("/history?limit=500")]);
+      $("stat-total").textContent = stats.total_verifications;
+      $("stat-passed").textContent = stats.passed;
+      $("stat-failed").textContent = stats.failed;
+      $("stat-rate").textContent = stats.pass_rate === null ? "–" : Math.round(stats.pass_rate * 100) + "%";
+      renderDonut(stats.passed, stats.failed);
+      all = hist.results || [];
+      renderBars();
+      renderTrend();
+      renderTable();
+      $("updated").textContent = "Updated " + new Date().toLocaleTimeString();
+      if (silent === "manual") T.toast("Dashboard refreshed.", "ok");
+    } catch (err) {
+      $("error-box").textContent = err.message;
+      $("error-box").hidden = false;
+      if (!all.length) $("history-body").innerHTML = '<tr><td class="empty" colspan="6">Nothing to show.</td></tr>';
+    }
+  }
+
+  $("refresh-btn").addEventListener("click", () => loadAll("manual"));
+  loadAll();
+  // keep the numbers fresh while the tab is open
+  setInterval(() => { if (!document.hidden) loadAll(true); }, 30000);
+})();
+</script>
+</body>
+</html>

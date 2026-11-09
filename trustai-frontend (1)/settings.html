@@ -1,0 +1,67 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Settings - TrustAI</title>
+<script>try{document.documentElement.setAttribute("data-theme",localStorage.getItem("theme")||"light")}catch(e){}</script>
+<link rel="stylesheet" href="theme.css">
+</head>
+<body class="app">
+  <aside class="sidebar" id="sidebar"></aside>
+  <main class="main">
+    <header class="page-head">
+      <h1>Settings</h1>
+      <p>Your account, appearance and how verification decisions are made.</p>
+    </header>
+    <div class="content" style="max-width:760px">
+      <section class="panel">
+        <h2>Account</h2>
+        <div class="kv">
+          <div><span>Signed in as</span><b id="account-username">–</b></div>
+          <div><span>Role</span><b>Operator</b></div>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Appearance</h2>
+        <p class="muted">Choose how the console looks. Your choice is remembered on this device.</p>
+        <div class="appearance">
+          <button class="btn btn-ghost" id="th-light" type="button">Light</button>
+          <button class="btn btn-ghost" id="th-dark" type="button">Dark</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>Face match pass mark</h2>
+        <p class="muted">
+          A face match must reach this score to pass. It is set on the server
+          (<code>FACE_MATCH_THRESHOLD</code> in <code>main.py</code>) and is shown here for reference.
+          When the ID photo and the selfie look far apart in age, the server lowers it slightly, but never below 70%.
+        </p>
+        <p class="big">75%</p>
+        <div class="meter" aria-hidden="true"><span style="width:75%"></span></div>
+      </section>
+    </div>
+  </main>
+
+<script src="common.js"></script>
+<script>
+  const T = window.TrustAI;
+  T.requireAuth();
+  T.renderSidebar("settings");
+  document.getElementById("account-username").textContent = T.getUser() || "–";
+
+  const light = document.getElementById("th-light"), dark = document.getElementById("th-dark");
+  function paint() {
+    const d = T.getTheme() === "dark";
+    light.setAttribute("aria-pressed", String(!d));
+    dark.setAttribute("aria-pressed", String(d));
+  }
+  light.addEventListener("click", () => T.setTheme("light"));
+  dark.addEventListener("click", () => T.setTheme("dark"));
+  document.addEventListener("themechange", paint);
+  paint();
+</script>
+</body>
+</html>

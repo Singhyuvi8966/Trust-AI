@@ -1,0 +1,518 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>New verification - TrustAI</title>
+<script>try{document.documentElement.setAttribute("data-theme",localStorage.getItem("theme")||"light")}catch(e){}</script>
+<link rel="stylesheet" href="theme.css">
+</head>
+<body class="app">
+  <aside class="sidebar" id="sidebar"></aside>
+
+  <main class="main">
+    <header class="page-head">
+      <h1>New verification</h1>
+      <p>Check an ID document against a live selfie.</p>
+    </header>
+
+    <div class="content">
+      <div class="verify-layout">
+        <div class="wizard">
+          <ol class="stepper" id="stepper" aria-label="Progress">
+            <li data-s="id"><span class="dot">1</span><span>ID document</span></li>
+            <li data-s="selfie"><span class="dot">2</span><span>Selfie</span></li>
+            <li data-s="review"><span class="dot">3</span><span>Review</span></li>
+          </ol>
+
+          <!-- Step 1 and 2: add a photo (camera or upload) -->
+          <section class="panel" id="capture-step">
+            <h2 id="step-title"></h2>
+            <p class="desc" id="step-desc"></p>
+
+            <div class="stage" id="stage">
+              <video id="video" autoplay playsinline muted hidden></video>
+              <img id="preview" alt="" hidden>
+              <span class="corner tl"></span><span class="corner tr"></span><span class="corner bl"></span><span class="corner br"></span>
+              <div class="guide" id="guide" hidden></div>
+              <div class="scan" id="scan" hidden></div>
+              <button type="button" class="dropzone" id="dropzone">
+                <span id="dz-icon"></span>
+                <span><strong>Drop a photo here</strong><br>or choose a file from your device</span>
+              </button>
+              <div class="countdown" id="countdown" hidden>
+                <div class="cd-hint" id="cd-hint"></div>
+                <div class="cd-num" id="cd-num" aria-live="assertive"></div>
+              </div>
+              <div class="flash" id="flash"></div>
+            </div>
+            <input type="file" id="file-input" accept="image/jpeg,image/png,image/webp" hidden>
+
+            <div class="quality" id="quality" aria-live="polite"></div>
+            <p class="alert" id="error" role="alert" hidden></p>
+            <div class="actions" id="actions"></div>
+          </section>
+
+          <!-- Step 3: review -->
+          <section class="panel" id="review-step" hidden>
+            <h2>Review before checking</h2>
+            <p class="desc">Make sure both photos are clear. You can replace either one.</p>
+            <div class="review-grid">
+              <figure>
+                <div class="thumb"><img id="rev-id" alt="ID document"></div>
+                <figcaption>ID document <button class="link" type="button" data-edit="id">Change</button></figcaption>
+              </figure>
+              <figure>
+                <div class="thumb"><img id="rev-selfie" alt="Selfie"></div>
+                <figcaption>Selfie <button class="link" type="button" data-edit="selfie">Change</button></figcaption>
+              </figure>
+            </div>
+            <p class="alert" id="review-error" role="alert" hidden></p>
+            <div id="progress" hidden><ol class="progress" id="progress-list"></ol></div>
+            <div class="actions">
+              <button class="btn btn-primary" id="verify-btn" type="button">Run verification</button>
+            </div>
+          </section>
+
+          <!-- Result -->
+          <section class="panel" id="result-step" hidden></section>
+        </div>
+
+        <aside class="panel tips" id="tips"></aside>
+      </div>
+    </div>
+  </main>
+
+<script src="common.js"></script>
+<script>
+(function () {
+  const T = window.TrustAI;
+  T.requireAuth();
+  T.renderSidebar("verify");
+
+  const $ = (id) => document.getElementById(id);
+  const ALLOWED = ["image/jpeg", "image/png", "image/webp"];
+  const MAX_BYTES = 8 * 1024 * 1024;
+
+  const CFG = {
+    id: {
+      title: "Add the ID document",
+      desc: "Photograph the front of the ID on a flat surface, or upload a clear photo of it. All four corners and the text should be visible.",
+      facing: "environment", mirror: false, name: "id_card.jpg", guideRound: false,
+    },
+    selfie: {
+      title: "Add a selfie",
+      desc: "Face the camera in good light, with no glasses, mask or hat. Or upload a recent photo of the person.",
+      facing: "user", mirror: true, name: "selfie.jpg", guideRound: true,
+    },
+  };
+  const STEPS = ["Uploading the photos", "Reading the document", "Matching the two faces", "Checking liveness and saving"];
+
+  const state = {
+    step: "id",                 // "id" | "selfie"
+    mode: "empty",              // "empty" | "camera" | "preview"
+    files: { id: null, selfie: null },
+    urls: { id: null, selfie: null },
+    quality: { id: null, selfie: null },
+    stream: null,
+    counting: false,
+  };
+  let cdTimer = null, progTimer = null;
+
+  const video = $("video"), preview = $("preview"), guide = $("guide"), scan = $("scan");
+  const dropzone = $("dropzone"), fileInput = $("file-input"), stage = $("stage");
+
+  const ART = {
+    id: `<svg class="art" viewBox="0 0 240 150" fill="none" aria-hidden="true">
+      <rect x="10" y="12" width="220" height="126" rx="12" fill="#fff" stroke="#1A3260" stroke-width="2"/>
+      <path d="M10 24a12 12 0 0 1 12-12h196a12 12 0 0 1 12 12v18H10z" fill="#10223F"/>
+      <circle cx="30" cy="27" r="6" fill="#DDBB6B"/>
+      <rect x="44" y="23" width="70" height="8" rx="4" fill="#DDBB6B" opacity=".9"/>
+      <rect x="26" y="56" width="58" height="68" rx="6" fill="#E9EDF5" stroke="#C5CCDA"/>
+      <circle cx="55" cy="80" r="12" fill="#B9C4D9"/>
+      <path d="M34 122c2-14 10-20 21-20s19 6 21 20z" fill="#B9C4D9"/>
+      <rect x="100" y="58" width="100" height="8" rx="4" fill="#C5CCDA"/>
+      <rect x="100" y="76" width="124" height="6" rx="3" fill="#E1E5EC"/>
+      <rect x="100" y="90" width="110" height="6" rx="3" fill="#E1E5EC"/>
+      <rect x="100" y="104" width="70" height="6" rx="3" fill="#E1E5EC"/>
+      <rect x="190" y="102" width="28" height="22" rx="4" fill="#DDBB6B" opacity=".85"/>
+    </svg>`,
+    selfie: `<svg class="art" viewBox="0 0 200 170" fill="none" aria-hidden="true">
+      <ellipse cx="100" cy="82" rx="54" ry="66" stroke="#B88A2E" stroke-width="2.5" stroke-dasharray="6 7"/>
+      <circle cx="100" cy="70" r="23" fill="#B9C4D9"/>
+      <path d="M56 150c4-26 20-38 44-38s40 12 44 38z" fill="#B9C4D9"/>
+    </svg>`,
+  };
+
+  $("tips").innerHTML = `
+    <h3>For a clean result</h3>
+    <ul>
+      <li><span class="ico">${T.ICONS.sun}</span><div><b>Good light</b><span class="t">Face a window or lamp. Avoid strong light behind the subject.</span></div></li>
+      <li><span class="ico">${T.ICONS.scan}</span><div><b>Fill the corners</b><span class="t">Keep the whole ID, or the whole face, inside the gold corners.</span></div></li>
+      <li><span class="ico">${T.ICONS.eye}</span><div><b>No glare or filters</b><span class="t">Tilt the ID if it shines. Turn off beauty filters on selfies.</span></div></li>
+    </ul>
+    <p class="privacy">${T.ICONS.lock}<span>Photos aren't saved. Only the result of the check is recorded.</span></p>`;
+
+  /* ---------- small helpers ---------- */
+  function showError(msg, id = "error") {
+    const el = $(id);
+    el.textContent = msg || "";
+    el.hidden = !msg;
+  }
+  function showSection(name) {
+    $("capture-step").hidden = name !== "capture";
+    $("review-step").hidden = name !== "review";
+    $("result-step").hidden = name !== "result";
+  }
+  function renderStepper(active) {
+    const order = ["id", "selfie", "review"];
+    const idx = order.indexOf(active);
+    document.querySelectorAll("#stepper li").forEach((li) => {
+      const i = order.indexOf(li.dataset.s);
+      li.classList.toggle("done", active === "result" || i < idx);
+      li.classList.toggle("active", i === idx);
+    });
+  }
+
+  /* ---------- photo quality hints ---------- */
+  async function analyzeQuality(file) {
+    let bmp;
+    try { bmp = await createImageBitmap(file); } catch (e) { return null; }
+    const scale = Math.min(1, 320 / Math.max(bmp.width, bmp.height));
+    const w = Math.max(3, Math.round(bmp.width * scale)), h = Math.max(3, Math.round(bmp.height * scale));
+    const c = document.createElement("canvas");
+    c.width = w; c.height = h;
+    const ctx = c.getContext("2d", { willReadFrequently: true });
+    ctx.drawImage(bmp, 0, 0, w, h);
+    const px = ctx.getImageData(0, 0, w, h).data;
+    const g = new Float32Array(w * h);
+    let sum = 0;
+    for (let i = 0, j = 0; i < px.length; i += 4, j++) {
+      g[j] = 0.299 * px[i] + 0.587 * px[i + 1] + 0.114 * px[i + 2];
+      sum += g[j];
+    }
+    let n = 0, s1 = 0, s2 = 0;
+    for (let y = 1; y < h - 1; y++) {
+      for (let x = 1; x < w - 1; x++) {
+        const i = y * w + x;
+        const l = -4 * g[i] + g[i - 1] + g[i + 1] + g[i - w] + g[i + w];
+        s1 += l; s2 += l * l; n++;
+      }
+    }
+    return { mean: sum / (w * h), variance: n ? s2 / n - (s1 / n) ** 2 : 0, minSide: Math.min(bmp.width, bmp.height) };
+  }
+  function qualityHtml(q) {
+    if (!q) return "";
+    const chip = (ok, text) => `<span class="qchip ${ok ? "ok" : "warn"}">${ok ? T.ICONS.ok : T.ICONS.alert}${text}</span>`;
+    const out = [];
+    if (q.mean < 55) out.push(chip(false, "Too dark. Move to better light."));
+    else if (q.mean > 225) out.push(chip(false, "Very bright. Reduce glare."));
+    else out.push(chip(true, "Lighting looks fine"));
+    out.push(q.variance < 35 ? chip(false, "May be blurry. Hold steady and retake.") : chip(true, "Looks sharp"));
+    if (q.minSide < 600) out.push(chip(false, "Low resolution. Move closer."));
+    return out.join("");
+  }
+
+  /* ---------- camera ---------- */
+  async function startCamera() {
+    showError("");
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      return showError("The camera isn't available in this browser. Upload a photo instead.");
+    }
+    try {
+      state.stream = await navigator.mediaDevices.getUserMedia({
+        video: { facingMode: { ideal: CFG[state.step].facing } },
+        audio: false,
+      });
+    } catch (e) {
+      return showError(e && e.name === "NotAllowedError"
+        ? "Camera access was blocked. Allow it in the address bar, or upload a photo instead."
+        : "Couldn't start the camera. Upload a photo instead.");
+    }
+    video.srcObject = state.stream;
+    try { await video.play(); } catch (e) { /* autoplay will handle it */ }
+    state.mode = "camera";
+    render();
+  }
+  function stopCamera() {
+    stopCountdown(true);
+    if (state.stream) state.stream.getTracks().forEach((t) => t.stop());
+    state.stream = null;
+    video.srcObject = null;
+  }
+  function takePhoto() {
+    if (!video.videoWidth) { showError("The camera is still starting. Try again in a second."); render(); return; }
+    const c = document.createElement("canvas");
+    c.width = video.videoWidth; c.height = video.videoHeight;
+    c.getContext("2d").drawImage(video, 0, 0);
+    c.toBlob((blob) => {
+      if (!blob) { showError("Couldn't capture the photo. Try again or upload one."); render(); return; }
+      const kind = state.step;
+      stopCamera();
+      setFile(kind, new File([blob], CFG[kind].name, { type: "image/jpeg" }));
+    }, "image/jpeg", 0.92);
+  }
+
+  /* ---------- selfie countdown ---------- */
+  function startCountdown() {
+    if (state.counting) return;
+    showError("");
+    state.counting = true;
+    render();
+    const seq = [[3, "Look straight at the camera"], [2, "Keep your face inside the oval"], [1, "Hold still"]];
+    let i = 0;
+    $("countdown").hidden = false;
+    const tick = () => {
+      if (i < seq.length) {
+        $("cd-num").innerHTML = `<span>${seq[i][0]}</span>`;
+        $("cd-hint").textContent = seq[i][1];
+        i++;
+        cdTimer = setTimeout(tick, 1000);
+      } else {
+        cdTimer = null;
+        state.counting = false;
+        $("countdown").hidden = true;
+        const f = $("flash");
+        f.classList.remove("go"); void f.offsetWidth; f.classList.add("go");
+        takePhoto();
+      }
+    };
+    tick();
+  }
+  function stopCountdown(silent) {
+    if (cdTimer) clearTimeout(cdTimer);
+    cdTimer = null;
+    const was = state.counting;
+    state.counting = false;
+    $("countdown").hidden = true;
+    if (was && !silent) render();
+  }
+
+  /* ---------- files ---------- */
+  async function prepare(file) {
+    if (!ALLOWED.includes(file.type)) throw new Error("That file type isn't supported. Use a JPG, PNG or WebP photo.");
+    if (file.size === 0) throw new Error("That file is empty. Choose another photo.");
+    if (file.size <= MAX_BYTES) return file;
+
+    let bmp = null;
+    try { bmp = await createImageBitmap(file); } catch (e) { /* handled below */ }
+    if (!bmp) throw new Error("That photo is over 8 MB and couldn't be resized. Choose a smaller one.");
+    const scale = Math.min(1, 2000 / Math.max(bmp.width, bmp.height));
+    const c = document.createElement("canvas");
+    c.width = Math.round(bmp.width * scale); c.height = Math.round(bmp.height * scale);
+    c.getContext("2d").drawImage(bmp, 0, 0, c.width, c.height);
+    const blob = await new Promise((res) => c.toBlob(res, "image/jpeg", 0.9));
+    if (!blob || blob.size > MAX_BYTES) throw new Error("That photo is still over 8 MB after resizing. Choose a smaller one.");
+    return new File([blob], file.name.replace(/\.[^.]+$/, "") + ".jpg", { type: "image/jpeg" });
+  }
+  async function handleChosenFile(file) {
+    if (!file) return;
+    showError("");
+    try { setFile(state.step, await prepare(file)); }
+    catch (e) { showError(e.message); }
+  }
+  function setFile(kind, file) {
+    if (state.urls[kind]) URL.revokeObjectURL(state.urls[kind]);
+    state.files[kind] = file;
+    state.urls[kind] = URL.createObjectURL(file);
+    state.quality[kind] = null;
+    state.step = kind;
+    state.mode = "preview";
+    render();
+    analyzeQuality(file).then((q) => {
+      if (state.files[kind] === file) {
+        state.quality[kind] = q;
+        if (state.step === kind && state.mode === "preview") $("quality").innerHTML = qualityHtml(q);
+      }
+    }).catch(() => {});
+  }
+  function clearFile(kind) {
+    if (state.urls[kind]) URL.revokeObjectURL(state.urls[kind]);
+    state.files[kind] = null; state.urls[kind] = null; state.quality[kind] = null;
+  }
+
+  /* ---------- navigation ---------- */
+  function goStep(kind) {
+    stopCamera();
+    showError("");
+    state.step = kind;
+    state.mode = state.files[kind] ? "preview" : "empty";
+    showSection("capture");
+    render();
+  }
+  function next() {
+    if (state.files.id && state.files.selfie) return showReview();
+    goStep(state.step === "id" ? "selfie" : "id");
+  }
+  function showReview() {
+    stopCamera();
+    $("rev-id").src = state.urls.id;
+    $("rev-selfie").src = state.urls.selfie;
+    showError("", "review-error");
+    showSection("review");
+    renderStepper("review");
+  }
+
+  /* ---------- rendering the capture step ---------- */
+  function render() {
+    const cfg = CFG[state.step];
+    $("step-title").textContent = cfg.title;
+    $("step-desc").textContent = cfg.desc;
+    renderStepper(state.step);
+
+    const m = state.mode;
+    video.hidden = m !== "camera";
+    video.classList.toggle("mirror", cfg.mirror);
+    scan.hidden = m === "preview";
+    guide.hidden = m !== "camera";
+    guide.classList.toggle("round", cfg.guideRound);
+    preview.hidden = m !== "preview";
+    dropzone.hidden = m !== "empty";
+    $("dz-icon").innerHTML = ART[state.step];
+    if (m === "preview") preview.src = state.urls[state.step];
+    $("quality").innerHTML = m === "preview" ? qualityHtml(state.quality[state.step]) : "";
+
+    const A = [];
+    if (state.counting) {
+      A.push(`<button class="btn btn-ghost" data-a="cancel-count" type="button">Cancel</button>`);
+    } else if (m === "empty") {
+      A.push(`<button class="btn btn-primary" data-a="camera" type="button">${T.ICONS.camera} Use camera</button>`);
+      A.push(`<button class="btn btn-ghost" data-a="upload" type="button">${T.ICONS.upload} Upload a photo</button>`);
+    } else if (m === "camera") {
+      const label = state.step === "selfie" ? "Start 3-2-1" : "Take photo";
+      A.push(`<button class="btn btn-primary" data-a="take" type="button">${T.ICONS.camera} ${label}</button>`);
+      A.push(`<button class="btn btn-ghost" data-a="cancel" type="button">Cancel</button>`);
+    } else {
+      A.push(`<button class="btn btn-ghost" data-a="retake" type="button">Choose another</button>`);
+      A.push(`<button class="btn btn-primary" data-a="next" type="button">Continue</button>`);
+    }
+    if (state.step === "selfie" && m !== "camera" && !state.counting) {
+      A.unshift(`<button class="btn btn-ghost" data-a="back" type="button">Back</button>`);
+    }
+    $("actions").innerHTML = A.join("");
+  }
+
+  $("actions").addEventListener("click", (e) => {
+    const b = e.target.closest("button[data-a]");
+    if (!b) return;
+    switch (b.dataset.a) {
+      case "camera": startCamera(); break;
+      case "upload": fileInput.click(); break;
+      case "take": state.step === "selfie" ? startCountdown() : takePhoto(); break;
+      case "cancel-count": stopCountdown(); break;
+      case "cancel": stopCamera(); state.mode = state.files[state.step] ? "preview" : "empty"; render(); break;
+      case "retake": clearFile(state.step); state.mode = "empty"; showError(""); render(); break;
+      case "next": next(); break;
+      case "back": goStep("id"); break;
+    }
+  });
+
+  dropzone.addEventListener("click", () => fileInput.click());
+  fileInput.addEventListener("change", () => { handleChosenFile(fileInput.files[0]); fileInput.value = ""; });
+  ["dragenter", "dragover"].forEach((ev) =>
+    stage.addEventListener(ev, (e) => { if (state.mode === "empty") { e.preventDefault(); stage.classList.add("over"); } }));
+  ["dragleave", "drop"].forEach((ev) => stage.addEventListener(ev, () => stage.classList.remove("over")));
+  stage.addEventListener("drop", (e) => {
+    if (state.mode !== "empty") return;
+    e.preventDefault();
+    handleChosenFile(e.dataTransfer.files[0]);
+  });
+  document.querySelectorAll("[data-edit]").forEach((b) =>
+    b.addEventListener("click", () => { const k = b.dataset.edit; clearFile(k); goStep(k); }));
+
+  /* ---------- verification with live progress ---------- */
+  function renderProgress(active) {
+    $("progress-list").innerHTML = STEPS.map((s, i) =>
+      `<li class="${i < active ? "done" : i === active ? "active" : ""}"><span class="pi"></span><span>${s}</span></li>`).join("");
+  }
+  function startProgress() {
+    $("verify-btn").hidden = true;
+    document.querySelectorAll("[data-edit]").forEach((b) => (b.disabled = true));
+    $("progress").hidden = false;
+    let i = 0;
+    renderProgress(0);
+    progTimer = setInterval(() => { if (i < STEPS.length - 1) { i++; renderProgress(i); } }, 1400);
+  }
+  function stopProgress() {
+    clearInterval(progTimer); progTimer = null;
+    $("progress").hidden = true;
+    $("verify-btn").hidden = false;
+    document.querySelectorAll("[data-edit]").forEach((b) => (b.disabled = false));
+  }
+  async function finishProgress() {
+    clearInterval(progTimer); progTimer = null;
+    renderProgress(STEPS.length);
+    await new Promise((r) => setTimeout(r, 550));
+  }
+
+  async function verify() {
+    const btn = $("verify-btn");
+    showError("", "review-error");
+    startProgress();
+    try {
+      const form = new FormData();
+      form.append("id_image", state.files.id, state.files.id.name);
+      form.append("selfie_image", state.files.selfie, state.files.selfie.name);
+      const data = await T.api("/verify", { method: "POST", body: form });
+      await finishProgress();
+      stopProgress();
+      showResult(data);
+      T.toast("Verification saved to the records.", "ok");
+    } catch (e) {
+      stopProgress();
+      showError(e.message, "review-error");
+      btn.textContent = "Try again";
+    }
+  }
+  $("verify-btn").addEventListener("click", verify);
+
+  function showResult(data) {
+    const esc = T.esc;
+    const pass = data.status === "pass";
+    const b = data.biometric_check || {};
+    const pct = Math.round((b.match_score || 0) * 100);
+    const C = 2 * Math.PI * 40;
+    const ring = `<svg class="ring" viewBox="0 0 100 100" role="img" aria-label="Face match ${pct}%">
+      <circle cx="50" cy="50" r="40" fill="none" stroke="currentColor" stroke-opacity=".18" stroke-width="9"/>
+      <circle cx="50" cy="50" r="40" fill="none" stroke="currentColor" stroke-width="9" stroke-linecap="round"
+        stroke-dasharray="${(C * pct / 100).toFixed(1)} ${C.toFixed(1)}" transform="rotate(-90 50 50)"/>
+      <text x="50" y="56" text-anchor="middle" font-size="22">${pct}%</text></svg>`;
+    const rows = T.describe(data);
+
+    $("result-step").innerHTML = `
+      <div class="verdict ${pass ? "ok" : "bad"}">
+        <span class="stamp-sm">${pass ? "VERIFIED" : "FLAGGED"}</span>
+        <div>
+          <h2>${pass ? "Identity verified" : "Flagged for review"}</h2>
+          <p>${esc(data.overall_reason)}</p>
+        </div>
+        ${ring}
+      </div>
+      <dl class="details">
+        ${rows.map(([k, v, cls]) => `<div><dt>${esc(k)}</dt><dd class="${cls}">${esc(v)}</dd></div>`).join("")}
+      </dl>
+      ${b.analysis_mode === "mock" ? `<p class="note" style="margin-top:18px">The server is in demo mode, so these results are simulated.</p>` : ""}
+      <div class="result-actions">
+        <button class="btn btn-ghost" id="print" type="button">${T.ICONS.printer} Print report</button>
+        <button class="btn btn-primary" id="again" type="button">Start another verification</button>
+      </div>`;
+    $("print").addEventListener("click", () =>
+      T.printReport(Object.assign({}, data, { timestamp: new Date().toISOString(), performed_by: T.getUser() })));
+    $("again").addEventListener("click", reset);
+    showSection("result");
+    renderStepper("result");
+  }
+
+  function reset() {
+    clearFile("id"); clearFile("selfie");
+    $("verify-btn").textContent = "Run verification";
+    stopProgress();
+    goStep("id");
+  }
+
+  window.addEventListener("beforeunload", stopCamera);
+  goStep("id");
+})();
+</script>
+</body>
+</html>

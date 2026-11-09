@@ -1,0 +1,97 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Create account - TrustAI</title>
+<script>try{document.documentElement.setAttribute("data-theme",localStorage.getItem("theme")||"light")}catch(e){}</script>
+<link rel="stylesheet" href="theme.css">
+</head>
+<body>
+<div class="auth">
+  <section class="auth-side">
+    <span class="particle"></span><span class="particle"></span><span class="particle"></span><span class="particle"></span><span class="particle"></span>
+    <div class="brand" id="brand"></div>
+    <div>
+      <svg class="hero" viewBox="0 0 300 240" fill="none" aria-hidden="true">
+        <defs><clipPath id="cardclip"><rect x="95" y="85" width="110" height="72" rx="8"/></clipPath></defs>
+        <path d="M150 14l112 40v66c0 52-42 88-112 108C80 208 38 172 38 120V54z" fill="rgba(221,187,107,0.08)"/>
+        <path class="shield" d="M150 14l112 40v66c0 52-42 88-112 108C80 208 38 172 38 120V54z" stroke="#DDBB6B" stroke-width="3" stroke-linejoin="round"/>
+        <rect x="95" y="85" width="110" height="72" rx="8" fill="rgba(255,255,255,0.07)" stroke="#B9C4D9" stroke-width="2"/>
+        <circle cx="125" cy="112" r="11" fill="#B9C4D9"/><path d="M107 148c2-10 9-15 18-15s16 5 18 15z" fill="#B9C4D9"/>
+        <rect x="150" y="100" width="42" height="6" rx="3" fill="#B9C4D9"/>
+        <rect x="150" y="116" width="34" height="5" rx="2.5" fill="#6F82A6"/>
+        <rect x="150" y="128" width="40" height="5" rx="2.5" fill="#6F82A6"/>
+        <g clip-path="url(#cardclip)"><rect class="scanbar" x="95" y="85" width="110" height="4" fill="#DDBB6B"/></g>
+        <path class="tick" d="M128 186l14 14 28-30" stroke="#DDBB6B" stroke-width="5" stroke-linecap="round" stroke-linejoin="round"/>
+      </svg>
+      <div class="rule"></div>
+      <h2>Set up your operator account.</h2>
+      <p class="lead">It takes a few seconds. Once you are in, you can run checks and review the history.</p>
+      <ul id="points"></ul>
+    </div>
+    <p class="lead" style="margin:0;font-size:.9rem">Verification console</p>
+  </section>
+
+  <section class="auth-form">
+    <div class="auth-card">
+      <h1>Create an account</h1>
+      <p class="sub">Get access to the verification console.</p>
+      <form id="signup-form" novalidate>
+        <label class="field"><span>Username</span>
+          <input id="username" type="text" autocomplete="username" required minlength="3">
+          <small>At least 3 characters</small></label>
+        <label class="field"><span>Password</span>
+          <input id="password" type="password" autocomplete="new-password" required minlength="4">
+          <small>At least 4 characters</small></label>
+        <label class="field"><span>Confirm password</span>
+          <input id="confirm" type="password" autocomplete="new-password" required></label>
+        <p class="alert" id="error-box" role="alert" hidden></p>
+        <button class="btn btn-primary btn-block" id="submit-btn" type="submit">Create account</button>
+      </form>
+      <p class="switch">Already have an account? <a href="login.html">Sign in</a></p>
+    </div>
+  </section>
+</div>
+
+<script src="common.js"></script>
+<script>
+  const T = window.TrustAI;
+  T.redirectIfAuthed();
+  T.mountThemeFab();
+  document.getElementById("brand").innerHTML = T.ICONS.shield + "<span>Trust<b>AI</b></span>";
+  document.getElementById("points").innerHTML = [
+    "Document tamper checks",
+    "Face match with liveness",
+    "A saved record of every check",
+  ].map((t) => `<li>${T.ICONS.ok}<span>${t}</span></li>`).join("");
+
+  const form = document.getElementById("signup-form");
+  const errorBox = document.getElementById("error-box");
+  const btn = document.getElementById("submit-btn");
+  const fail = (msg) => { errorBox.textContent = msg; errorBox.hidden = false; };
+
+  form.addEventListener("submit", async (e) => {
+    e.preventDefault();
+    errorBox.hidden = true;
+    const username = document.getElementById("username").value.trim();
+    const password = document.getElementById("password").value;
+    const confirm = document.getElementById("confirm").value;
+    if (username.length < 3) return fail("Username needs at least 3 characters.");
+    if (password.length < 4) return fail("Password needs at least 4 characters.");
+    if (password !== confirm) return fail("The two passwords don't match.");
+
+    btn.disabled = true; btn.textContent = "Creating account…";
+    try {
+      const data = await T.api("/auth/signup", { method: "POST", json: { username, password }, auth: false });
+      T.setSession(data.token, data.username);
+      T.flash("Account created. Welcome, " + data.username, "ok");
+      window.location.href = "app_fixed.html";
+    } catch (err) {
+      fail(err.message);
+      btn.disabled = false; btn.textContent = "Create account";
+    }
+  });
+</script>
+</body>
+</html>
