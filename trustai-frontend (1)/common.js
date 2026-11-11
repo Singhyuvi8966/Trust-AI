@@ -1,7 +1,7 @@
 /* Shared helpers for all TrustAI pages */
 (function () {
   // If your backend runs somewhere else, change this one line.
-  const API_BASE = "https://trust-ai-backend-ikc1.onrender.com"
+  const API_BASE = "https://trust-ai-yvzx.onrender.com"
   try { localStorage.removeItem("apiBase"); } catch (e) { /* ignore old setting */ }
 
   const svg = (inner) => `<svg class="i" viewBox="0 0 24 24" aria-hidden="true">${inner}</svg>`;
