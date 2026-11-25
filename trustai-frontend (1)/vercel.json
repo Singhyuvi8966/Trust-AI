@@ -3,7 +3,7 @@
   "rewrites": [
     {
       "source": "/api/:path*",
-      "destination": "https://trust-ai-yvzx.onrender.com*"
+      "destination": "https://trust-ai-yvzx.onrender.com/api/:path*"
     }
   ]
 }
