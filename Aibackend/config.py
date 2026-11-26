@@ -21,7 +21,7 @@ IS_PROD = APP_ENV == "production"
 # Websites allowed to call the API from a browser. Not needed when the frontend and the API
 # share one domain (the Docker setup does that). Comma separated.
 ALLOWED_ORIGINS = [
-    o.strip() for o in os.getenv("ALLOWED_ORIGINS", "https://ai-document-xi.vercel.app/,http://127.0.0.1:5500,http://localhost:5500").split(",") if o.strip()
+    o.strip() for o in os.getenv("ALLOWED_ORIGINS", "https://trust-ai-yvzx.onrender.com/auth/login,https://ai-document-xi.vercel.app/,http://127.0.0.1:5500,http://localhost:5500").split(",") if o.strip()
 ]
 
 # Can anyone create an account from the signup page?
